@@ -1689,7 +1689,8 @@ static int update_squash_messages(struct repository *r,
 	return res;
 }
 
-static void flush_rewritten_pending(void) {
+static void flush_rewritten_pending(void)
+{
 	struct strbuf buf = STRBUF_INIT;
 	struct object_id newoid;
 	FILE *out;
@@ -1714,7 +1715,8 @@ static void flush_rewritten_pending(void) {
 }
 
 static void record_in_rewritten(struct object_id *oid,
-		enum todo_command next_command) {
+		enum todo_command next_command)
+{
 	FILE *out = fopen_or_warn(rebase_path_rewritten_pending(), "a");
 
 	if (!out)
@@ -1788,9 +1790,13 @@ static int do_pick_commit(struct repository *r,
 			return error(_("commit %s does not have parent %d"),
 				oid_to_hex(&commit->object.oid), opts->mainline);
 		parent = p->item;
-	} else if (0 < opts->mainline)
-		return error(_("mainline was specified but commit %s is not a merge."),
-			oid_to_hex(&commit->object.oid));
+	} else if (1 < opts->mainline)
+		/*
+		 *  Non-first parent explicitly specified as mainline for
+		 *  non-merge commit
+		 */
+		return error(_("commit %s does not have parent %d"),
+			     oid_to_hex(&commit->object.oid), opts->mainline);
 	else
 		parent = commit->parents->item;
 
