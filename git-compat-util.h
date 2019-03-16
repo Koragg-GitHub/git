@@ -1234,6 +1234,14 @@ struct tm *git_gmtime_r(const time_t *, struct tm *);
 #define getc_unlocked(fh) getc(fh)
 #endif
 
+#ifdef FILENO_IS_A_MACRO
+int git_fileno(FILE *stream);
+# ifndef COMPAT_CODE
+#  undef fileno
+#  define fileno(p) git_fileno(p)
+# endif
+#endif
+
 /*
  * Our code often opens a path to an optional file, to work on its
  * contents when we can successfully open it.  We can ignore a failure
@@ -1250,6 +1258,13 @@ static inline int is_missing_file_error(int errno_)
 }
 
 extern int cmd_main(int, const char **);
+
+/*
+ * Intercept all calls to exit() and route them to trace2 to
+ * optionally emit a message before calling the real exit().
+ */
+int trace2_cmd_exit_fl(const char *file, int line, int code);
+#define exit(code) exit(trace2_cmd_exit_fl(__FILE__, __LINE__, (code)))
 
 /*
  * You can mark a stack variable with UNLEAK(var) to avoid it being

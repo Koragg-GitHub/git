@@ -4,6 +4,7 @@
  * (C) Copyright 2006 Linus Torvalds
  *		 2006 Junio Hamano
  */
+#define USE_THE_INDEX_COMPATIBILITY_MACROS
 #include "cache.h"
 #include "config.h"
 #include "refs.h"
@@ -83,6 +84,10 @@ static int parse_decoration_style(const char *value)
 		return DECORATE_SHORT_REFS;
 	else if (!strcmp(value, "auto"))
 		return auto_decoration_style();
+	/*
+	 * Please update _git_log() in git-completion.bash when you
+	 * add new decoration styles.
+	 */
 	return -1;
 }
 
@@ -509,7 +514,8 @@ static int show_blob_object(const struct object_id *oid, struct rev_info *rev, c
 	    !rev->diffopt.flags.allow_textconv)
 		return stream_blob_to_fd(1, oid, NULL, 0);
 
-	if (get_oid_with_context(obj_name, GET_OID_RECORD_PATH,
+	if (get_oid_with_context(the_repository, obj_name,
+				 GET_OID_RECORD_PATH,
 				 &oidc, &obj_context))
 		die(_("Not a valid object name %s"), obj_name);
 	if (!obj_context.path ||
@@ -1226,6 +1232,10 @@ static int thread_callback(const struct option *opt, const char *arg, int unset)
 		*thread = THREAD_SHALLOW;
 	else if (!strcmp(arg, "deep"))
 		*thread = THREAD_DEEP;
+	/*
+	 * Please update _git_formatpatch() in git-completion.bash
+	 * when you add new options.
+	 */
 	else
 		return 1;
 	return 0;

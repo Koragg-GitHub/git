@@ -188,7 +188,7 @@ static struct commit *fake_working_tree_commit(struct repository *r,
 	unsigned mode;
 	struct strbuf msg = STRBUF_INIT;
 
-	read_index(r->index);
+	repo_read_index(r);
 	time(&now);
 	commit = alloc_commit_node(r);
 	commit->object.parsed = 1;
@@ -204,7 +204,8 @@ static struct commit *fake_working_tree_commit(struct repository *r,
 
 	origin = make_origin(commit, path);
 
-	ident = fmt_ident("Not Committed Yet", "not.committed.yet", NULL, 0);
+	ident = fmt_ident("Not Committed Yet", "not.committed.yet",
+			WANT_BLANK_IDENT, NULL, 0);
 	strbuf_addstr(&msg, "tree 0000000000000000000000000000000000000000\n");
 	for (parent = commit->parents; parent; parent = parent->next)
 		strbuf_addf(&msg, "parent %s\n",
@@ -270,7 +271,7 @@ static struct commit *fake_working_tree_commit(struct repository *r,
 	 * want to run "diff-index --cached".
 	 */
 	discard_index(r->index);
-	read_index(r->index);
+	repo_read_index(r);
 
 	len = strlen(path);
 	if (!mode) {

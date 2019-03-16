@@ -259,6 +259,10 @@ all::
 # Define OLD_ICONV if your library has an old iconv(), where the second
 # (input buffer pointer) parameter is declared with type (const char **).
 #
+# Define ICONV_OMITS_BOM if your iconv implementation does not write a
+# byte-order mark (BOM) when writing UTF-16 or UTF-32 and always writes in
+# big-endian format.
+#
 # Define NO_DEFLATE_BOUND if your zlib does not have deflateBound.
 #
 # Define NO_R_TO_GCC_LINKER if your gcc does not like "-R/path/lib"
@@ -433,6 +437,8 @@ all::
 #
 # Define HAVE_GETDELIM if your system has the getdelim() function.
 #
+# Define FILENO_IS_A_MACRO if fileno() is a macro, not a real function.
+#
 # Define PAGER_ENV to a SP separated VAR=VAL pairs to define
 # default environment variables to be passed when a pager is spawned, e.g.
 #
@@ -574,7 +580,11 @@ SPATCH = spatch
 
 export TCL_PATH TCLTK_PATH
 
-SPARSE_FLAGS =
+# user customisation variable for 'sparse' target
+SPARSE_FLAGS ?=
+# internal/platform customisation variable for 'sparse'
+SP_EXTRA_FLAGS =
+
 SPATCH_FLAGS = --all-includes --patch .
 
 
@@ -634,7 +644,6 @@ SCRIPT_LIB += git-parse-remote
 SCRIPT_LIB += git-rebase--am
 SCRIPT_LIB += git-rebase--common
 SCRIPT_LIB += git-rebase--preserve-merges
-SCRIPT_LIB += git-rebase--merge
 SCRIPT_LIB += git-sh-setup
 SCRIPT_LIB += git-sh-i18n
 
@@ -731,6 +740,7 @@ TEST_BUILTINS_OBJS += test-dump-split-index.o
 TEST_BUILTINS_OBJS += test-dump-untracked-cache.o
 TEST_BUILTINS_OBJS += test-example-decorate.o
 TEST_BUILTINS_OBJS += test-genrandom.o
+TEST_BUILTINS_OBJS += test-genzeros.o
 TEST_BUILTINS_OBJS += test-hash.o
 TEST_BUILTINS_OBJS += test-hashmap.o
 TEST_BUILTINS_OBJS += test-hash-speed.o
@@ -763,7 +773,9 @@ TEST_BUILTINS_OBJS += test-string-list.o
 TEST_BUILTINS_OBJS += test-submodule-config.o
 TEST_BUILTINS_OBJS += test-submodule-nested-repo-config.o
 TEST_BUILTINS_OBJS += test-subprocess.o
+TEST_BUILTINS_OBJS += test-trace2.o
 TEST_BUILTINS_OBJS += test-urlmatch-normalization.o
+TEST_BUILTINS_OBJS += test-xml-encode.o
 TEST_BUILTINS_OBJS += test-wildmatch.o
 TEST_BUILTINS_OBJS += test-windows-named-pipe.o
 TEST_BUILTINS_OBJS += test-write-cache.o
@@ -830,7 +842,8 @@ VCSSVN_LIB = vcs-svn/lib.a
 
 GENERATED_H += command-list.h
 
-LIB_H = $(shell $(FIND) . \
+LIB_H := $(shell git ls-files '*.h' ':!t/' ':!Documentation/' 2>/dev/null || \
+	$(FIND) . \
 	-name .git -prune -o \
 	-name t -prune -o \
 	-name Documentation -prune -o \
@@ -1006,6 +1019,16 @@ LIB_OBJS += tempfile.o
 LIB_OBJS += thread-utils.o
 LIB_OBJS += tmp-objdir.o
 LIB_OBJS += trace.o
+LIB_OBJS += trace2.o
+LIB_OBJS += trace2/tr2_cfg.o
+LIB_OBJS += trace2/tr2_cmd_name.o
+LIB_OBJS += trace2/tr2_dst.o
+LIB_OBJS += trace2/tr2_sid.o
+LIB_OBJS += trace2/tr2_tbuf.o
+LIB_OBJS += trace2/tr2_tgt_event.o
+LIB_OBJS += trace2/tr2_tgt_normal.o
+LIB_OBJS += trace2/tr2_tgt_perf.o
+LIB_OBJS += trace2/tr2_tls.o
 LIB_OBJS += trailer.o
 LIB_OBJS += transport.o
 LIB_OBJS += transport-helper.o
@@ -1411,6 +1434,9 @@ ifndef NO_ICONV
 		EXTLIBS += $(ICONV_LINK) -liconv
 	endif
 endif
+ifdef ICONV_OMITS_BOM
+	BASIC_CFLAGS += -DICONV_OMITS_BOM
+endif
 ifdef NEEDS_LIBGEN
 	EXTLIBS += -lgen
 endif
@@ -1582,7 +1608,9 @@ ifdef NO_INET_PTON
 	LIB_OBJS += compat/inet_pton.o
 	BASIC_CFLAGS += -DNO_INET_PTON
 endif
-ifndef NO_UNIX_SOCKETS
+ifdef NO_UNIX_SOCKETS
+	BASIC_CFLAGS += -DNO_UNIX_SOCKETS
+else
 	LIB_OBJS += unix-socket.o
 	PROGRAM_OBJS += credential-cache.o
 	PROGRAM_OBJS += credential-cache--daemon.o
@@ -1794,6 +1822,11 @@ endif
 
 ifdef HAVE_WPGMPTR
 	BASIC_CFLAGS += -DHAVE_WPGMPTR
+endif
+
+ifdef FILENO_IS_A_MACRO
+	COMPAT_CFLAGS += -DFILENO_IS_A_MACRO
+	COMPAT_OBJS += compat/fileno.o
 endif
 
 ifeq ($(TCLTK_PATH),)
@@ -2344,7 +2377,7 @@ else
 # should _not_ be included here, since they are necessary even when
 # building an object for the first time.
 
-$(OBJECTS): $(LIB_H)
+$(OBJECTS): $(LIB_H) $(GENERATED_H)
 endif
 
 exec-cmd.sp exec-cmd.s exec-cmd.o: GIT-PREFIX
@@ -2370,10 +2403,10 @@ gettext.sp gettext.s gettext.o: GIT-PREFIX
 gettext.sp gettext.s gettext.o: EXTRA_CPPFLAGS = \
 	-DGIT_LOCALE_PATH='"$(localedir_relative_SQ)"'
 
-http-push.sp http.sp http-walker.sp remote-curl.sp imap-send.sp: SPARSE_FLAGS += \
+http-push.sp http.sp http-walker.sp remote-curl.sp imap-send.sp: SP_EXTRA_FLAGS += \
 	-DCURL_DISABLE_TYPECHECK
 
-pack-revindex.sp: SPARSE_FLAGS += -Wno-memcpy-max-count
+pack-revindex.sp: SP_EXTRA_FLAGS += -Wno-memcpy-max-count
 
 ifdef NO_EXPAT
 http-walker.sp http-walker.s http-walker.o: EXTRA_CPPFLAGS = -DNO_EXPAT
@@ -2387,7 +2420,7 @@ endif
 ifdef USE_NED_ALLOCATOR
 compat/nedmalloc/nedmalloc.sp compat/nedmalloc/nedmalloc.o: EXTRA_CPPFLAGS = \
 	-DNDEBUG -DREPLACE_SYSTEM_ALLOCATOR
-compat/nedmalloc/nedmalloc.sp: SPARSE_FLAGS += -Wno-non-pointer-null
+compat/nedmalloc/nedmalloc.sp: SP_EXTRA_FLAGS += -Wno-non-pointer-null
 endif
 
 git-%$X: %.o GIT-LDFLAGS $(GITLIBS)
@@ -2711,13 +2744,16 @@ SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
 
 $(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
 	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
-		$(SPARSE_FLAGS) $<
+		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $<
 
 .PHONY: sparse $(SP_OBJ)
 sparse: $(SP_OBJ)
 
 GEN_HDRS := command-list.h unicode-width.h
-EXCEPT_HDRS := $(GEN_HDRS) compat% xdiff%
+EXCEPT_HDRS := $(GEN_HDRS) compat/% xdiff/%
+ifndef GCRYPT_SHA256
+	EXCEPT_HDRS += sha256/gcrypt.h
+endif
 CHK_HDRS = $(filter-out $(EXCEPT_HDRS),$(patsubst ./%,%,$(LIB_H)))
 HCO = $(patsubst %.h,%.hco,$(CHK_HDRS))
 
@@ -2949,6 +2985,16 @@ rpm::
 	@false
 .PHONY: rpm
 
+artifacts-tar:: $(ALL_PROGRAMS) $(SCRIPT_LIB) $(BUILT_INS) $(OTHER_PROGRAMS) \
+		GIT-BUILD-OPTIONS $(TEST_PROGRAMS) $(test_bindir_programs) \
+		$(NO_INSTALL) $(MOFILES)
+	$(QUIET_SUBDIR0)templates $(QUIET_SUBDIR1) \
+		SHELL_PATH='$(SHELL_PATH_SQ)' PERL_PATH='$(PERL_PATH_SQ)'
+	test -n "$(ARTIFACTS_DIRECTORY)"
+	mkdir -p "$(ARTIFACTS_DIRECTORY)"
+	$(TAR) czf "$(ARTIFACTS_DIRECTORY)/artifacts.tar.gz" $^ templates/blt/
+.PHONY: artifacts-tar
+
 htmldocs = git-htmldocs-$(GIT_VERSION)
 manpages = git-manpages-$(GIT_VERSION)
 .PHONY: dist-doc distclean
@@ -3099,6 +3145,11 @@ coverage-compile:
 coverage-test: coverage-clean-results coverage-compile
 	$(MAKE) CFLAGS="$(COVERAGE_CFLAGS)" LDFLAGS="$(COVERAGE_LDFLAGS)" \
 		DEFAULT_TEST_TARGET=test -j1 test
+
+coverage-prove: coverage-clean-results coverage-compile
+	$(MAKE) CFLAGS="$(COVERAGE_CFLAGS)" LDFLAGS="$(COVERAGE_LDFLAGS)" \
+		DEFAULT_TEST_TARGET=prove GIT_PROVE_OPTS="$(GIT_PROVE_OPTS) -j1" \
+		-j1 test
 
 coverage-report:
 	$(QUIET_GCOV)for dir in $(object_dirs); do \

@@ -1,5 +1,6 @@
 #include "git-compat-util.h"
 #include "test-tool.h"
+#include "trace2.h"
 
 struct test_cmd {
 	const char *name;
@@ -19,6 +20,7 @@ static struct test_cmd cmds[] = {
 	{ "dump-untracked-cache", cmd__dump_untracked_cache },
 	{ "example-decorate", cmd__example_decorate },
 	{ "genrandom", cmd__genrandom },
+	{ "genzeros", cmd__genzeros },
 	{ "hashmap", cmd__hashmap },
 	{ "hash-speed", cmd__hash_speed },
 	{ "index-version", cmd__index_version },
@@ -50,7 +52,9 @@ static struct test_cmd cmds[] = {
 	{ "submodule-config", cmd__submodule_config },
 	{ "submodule-nested-repo-config", cmd__submodule_nested_repo_config },
 	{ "subprocess", cmd__subprocess },
+	{ "trace2", cmd__trace2 },
 	{ "urlmatch-normalization", cmd__urlmatch_normalization },
+	{ "xml-encode", cmd__xml_encode },
 	{ "wildmatch", cmd__wildmatch },
 #ifdef GIT_WINDOWS_NATIVE
 	{ "windows-named-pipe", cmd__windows_named_pipe },
@@ -80,6 +84,8 @@ int cmd_main(int argc, const char **argv)
 		if (!strcmp(cmds[i].name, argv[1])) {
 			argv++;
 			argc--;
+			trace2_cmd_name(cmds[i].name);
+			trace2_cmd_list_config();
 			return cmds[i].fn(argc, argv);
 		}
 	}

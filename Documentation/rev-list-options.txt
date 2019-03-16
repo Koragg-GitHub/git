@@ -836,6 +836,13 @@ Note that the `-local` option does not affect the seconds-since-epoch
 value (which is always measured in UTC), but does switch the accompanying
 timezone value.
 +
+`--date=human` shows the timezone if the timezone does not match the
+current time-zone, and doesn't print the whole date if that matches
+(ie skip printing year for dates that are "this year", but also skip
+the whole date itself if it's in the last few days and we can just say
+what weekday it was).  For older dates the hour and minute is also
+omitted.
++
 `--date=unix` shows the date as a Unix epoch timestamp (seconds since
 1970).  As with `--raw`, this is always in UTC and therefore `-local`
 has no effect.
@@ -952,6 +959,13 @@ options may be given. See linkgit:git-diff-files[1] for more options.
 	patch output by omitting uninteresting hunks whose contents in
 	the parents have only two variants and the merge result picks
 	one of them without modification.
+
+--combined-all-paths::
+	This flag causes combined diffs (used for merge commits) to
+	list the name of the file from all parents.  It thus only has
+	effect when -c or --cc are specified, and is likely only
+	useful if filename changes are detected (i.e. when either
+	rename or copy detection have been requested).
 
 -m::
 	This flag makes the merge commits show the full diff like

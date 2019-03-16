@@ -3,7 +3,6 @@
  *
  * Copyright (C) Linus Torvalds, 2005
  */
-#define NO_THE_INDEX_COMPATIBILITY_MACROS
 #include "cache.h"
 #include "config.h"
 #include "diff.h"
@@ -95,7 +94,6 @@ static struct mem_pool *find_mem_pool(struct index_state *istate)
 	return *pool_ptr;
 }
 
-struct index_state the_index;
 static const char *alternate_index_output;
 
 static void set_index_entry(struct index_state *istate, int nr, struct cache_entry *ce)
@@ -590,13 +588,19 @@ int remove_index_entry_at(struct index_state *istate, int pos)
  * CE_REMOVE is set in ce_flags.  This is much more effective than
  * calling remove_index_entry_at() for each entry to be removed.
  */
-void remove_marked_cache_entries(struct index_state *istate)
+void remove_marked_cache_entries(struct index_state *istate, int invalidate)
 {
 	struct cache_entry **ce_array = istate->cache;
 	unsigned int i, j;
 
 	for (i = j = 0; i < istate->cache_nr; i++) {
 		if (ce_array[i]->ce_flags & CE_REMOVE) {
+			if (invalidate) {
+				cache_tree_invalidate_path(istate,
+							   ce_array[i]->name);
+				untracked_cache_remove_from_index(istate,
+								  ce_array[i]->name);
+			}
 			remove_name_hash(istate, ce_array[i]);
 			save_or_free_index_entry(istate, ce_array[i]);
 		}
@@ -746,7 +750,7 @@ int add_to_index(struct index_state *istate, const char *path, struct stat *st, 
 	if (ignore_case) {
 		adjust_dirname_case(istate, ce->name);
 	}
-	if (!(flags & HASH_RENORMALIZE)) {
+	if (!(flags & ADD_CACHE_RENORMALIZE)) {
 		alias = index_file_exists(istate, ce->name,
 					  ce_namelen(ce), ignore_case);
 		if (alias &&
@@ -1733,16 +1737,6 @@ static int read_index_extension(struct index_state *istate,
 	return 0;
 }
 
-int hold_locked_index(struct lock_file *lk, int lock_flags)
-{
-	return hold_lock_file_for_update(lk, get_index_file(), lock_flags);
-}
-
-int read_index(struct index_state *istate)
-{
-	return read_index_from(istate, get_index_file(), get_git_dir());
-}
-
 static struct cache_entry *create_from_disk(struct mem_pool *ce_mem_pool,
 					    unsigned int version,
 					    struct ondisk_cache_entry *ondisk,
@@ -2232,6 +2226,16 @@ int do_read_index(struct index_state *istate, const char *path, int must_exist)
 		load_index_extensions(&p);
 	}
 	munmap((void *)mmap, mmap_size);
+
+	/*
+	 * TODO trace2: replace "the_repository" with the actual repo instance
+	 * that is associated with the given "istate".
+	 */
+	trace2_data_intmax("index", the_repository, "read/version",
+			   istate->version);
+	trace2_data_intmax("index", the_repository, "read/cache_nr",
+			   istate->cache_nr);
+
 	return istate->cache_nr;
 
 unmap:
@@ -2263,9 +2267,17 @@ int read_index_from(struct index_state *istate, const char *path,
 	if (istate->initialized)
 		return istate->cache_nr;
 
+	/*
+	 * TODO trace2: replace "the_repository" with the actual repo instance
+	 * that is associated with the given "istate".
+	 */
+	trace2_region_enter_printf("index", "do_read_index", the_repository,
+				   "%s", path);
 	trace_performance_enter();
 	ret = do_read_index(istate, path, 0);
 	trace_performance_leave("read cache %s", path);
+	trace2_region_leave_printf("index", "do_read_index", the_repository,
+				   "%s", path);
 
 	split_index = istate->split_index;
 	if (!split_index || is_null_oid(&split_index->base_oid)) {
@@ -2281,7 +2293,11 @@ int read_index_from(struct index_state *istate, const char *path,
 
 	base_oid_hex = oid_to_hex(&split_index->base_oid);
 	base_path = xstrfmt("%s/sharedindex.%s", gitdir, base_oid_hex);
+	trace2_region_enter_printf("index", "shared/do_read_index",
+				   the_repository, "%s", base_path);
 	ret = do_read_index(split_index->base, base_path, 1);
+	trace2_region_leave_printf("index", "shared/do_read_index",
+				   the_repository, "%s", base_path);
 	if (!oideq(&split_index->base_oid, &split_index->base->oid))
 		die(_("broken index, expect %s in %s, got %s"),
 		    base_oid_hex, base_path,
@@ -2375,22 +2391,20 @@ int unmerged_index(const struct index_state *istate)
 	return 0;
 }
 
-int index_has_changes(struct index_state *istate,
-		      struct tree *tree,
-		      struct strbuf *sb)
+int repo_index_has_changes(struct repository *repo,
+			   struct tree *tree,
+			   struct strbuf *sb)
 {
+	struct index_state *istate = repo->index;
 	struct object_id cmp;
 	int i;
 
-	if (istate != &the_index) {
-		BUG("index_has_changes cannot yet accept istate != &the_index; do_diff_cache needs updating first.");
-	}
 	if (tree)
 		cmp = tree->object.oid;
 	if (tree || !get_oid_tree("HEAD", &cmp)) {
 		struct diff_options opt;
 
-		repo_diff_setup(the_repository, &opt);
+		repo_diff_setup(repo, &opt);
 		opt.flags.exit_with_status = 1;
 		if (!sb)
 			opt.flags.quick = 1;
@@ -2664,9 +2678,9 @@ out:
 	return 0;
 }
 
-static int verify_index(const struct index_state *istate)
+static int repo_verify_index(struct repository *repo)
 {
-	return verify_index_from(istate, get_index_file());
+	return verify_index_from(repo->index, repo->index_file);
 }
 
 static int has_racy_timestamp(struct index_state *istate)
@@ -2682,11 +2696,13 @@ static int has_racy_timestamp(struct index_state *istate)
 	return 0;
 }
 
-void update_index_if_able(struct index_state *istate, struct lock_file *lockfile)
+void repo_update_index_if_able(struct repository *repo,
+			       struct lock_file *lockfile)
 {
-	if ((istate->cache_changed || has_racy_timestamp(istate)) &&
-	    verify_index(istate))
-		write_locked_index(istate, lockfile, COMMIT_LOCK);
+	if ((repo->index->cache_changed ||
+	     has_racy_timestamp(repo->index)) &&
+	    repo_verify_index(repo))
+		write_locked_index(repo->index, lockfile, COMMIT_LOCK);
 	else
 		rollback_lock_file(lockfile);
 }
@@ -2906,7 +2922,8 @@ static int do_write_index(struct index_state *istate, struct tempfile *tempfile,
 			return -1;
 	}
 
-	if (!strip_extensions && istate->split_index) {
+	if (!strip_extensions && istate->split_index &&
+	    !is_null_oid(&istate->split_index->base_oid)) {
 		struct strbuf sb = STRBUF_INIT;
 
 		err = write_link_extension(&sb, istate) < 0 ||
@@ -2988,6 +3005,16 @@ static int do_write_index(struct index_state *istate, struct tempfile *tempfile,
 	istate->timestamp.sec = (unsigned int)st.st_mtime;
 	istate->timestamp.nsec = ST_MTIME_NSEC(st);
 	trace_performance_since(start, "write index, changed mask = %x", istate->cache_changed);
+
+	/*
+	 * TODO trace2: replace "the_repository" with the actual repo instance
+	 * that is associated with the given "istate".
+	 */
+	trace2_data_intmax("index", the_repository, "write/version",
+			   istate->version);
+	trace2_data_intmax("index", the_repository, "write/cache_nr",
+			   istate->cache_nr);
+
 	return 0;
 }
 
@@ -3007,7 +3034,18 @@ static int commit_locked_index(struct lock_file *lk)
 static int do_write_locked_index(struct index_state *istate, struct lock_file *lock,
 				 unsigned flags)
 {
-	int ret = do_write_index(istate, lock->tempfile, 0);
+	int ret;
+
+	/*
+	 * TODO trace2: replace "the_repository" with the actual repo instance
+	 * that is associated with the given "istate".
+	 */
+	trace2_region_enter_printf("index", "do_write_index", the_repository,
+				   "%s", lock->tempfile->filename.buf);
+	ret = do_write_index(istate, lock->tempfile, 0);
+	trace2_region_leave_printf("index", "do_write_index", the_repository,
+				   "%s", lock->tempfile->filename.buf);
+
 	if (ret)
 		return ret;
 	if (flags & COMMIT_LOCK)
@@ -3092,7 +3130,13 @@ static int write_shared_index(struct index_state *istate,
 	int ret;
 
 	move_cache_to_base_index(istate);
+
+	trace2_region_enter_printf("index", "shared/do_write_index",
+				   the_repository, "%s", (*temp)->filename.buf);
 	ret = do_write_index(si->base, *temp, 1);
+	trace2_region_enter_printf("index", "shared/do_write_index",
+				   the_repository, "%s", (*temp)->filename.buf);
+
 	if (ret)
 		return ret;
 	ret = adjust_shared_perm(get_tempfile_path(*temp));
@@ -3201,7 +3245,7 @@ int write_locked_index(struct index_state *istate, struct lock_file *lock,
 	ret = write_split_index(istate, lock, flags);
 
 	/* Freshen the shared index only if the split-index was written */
-	if (!ret && !new_shared_index) {
+	if (!ret && !new_shared_index && !is_null_oid(&si->base_oid)) {
 		const char *shared_index = git_path("sharedindex.%s",
 						    oid_to_hex(&si->base_oid));
 		freshen_shared_index(shared_index, 1);
@@ -3223,12 +3267,14 @@ out:
  * state can call this and check its return value, instead of calling
  * read_cache().
  */
-int read_index_unmerged(struct index_state *istate)
+int repo_read_index_unmerged(struct repository *repo)
 {
+	struct index_state *istate;
 	int i;
 	int unmerged = 0;
 
-	read_index(istate);
+	repo_read_index(repo);
+	istate = repo->index;
 	for (i = 0; i < istate->cache_nr; i++) {
 		struct cache_entry *ce = istate->cache[i];
 		struct cache_entry *new_ce;

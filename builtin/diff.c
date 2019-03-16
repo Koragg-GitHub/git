@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2006 Junio C Hamano
  */
+#define USE_THE_INDEX_COMPATIBILITY_MACROS
 #include "cache.h"
 #include "config.h"
 #include "lockfile.h"
@@ -102,7 +103,7 @@ static int builtin_diff_blobs(struct rev_info *revs,
 			      int argc, const char **argv,
 			      struct object_array_entry **blob)
 {
-	unsigned mode = canon_mode(S_IFREG | 0644);
+	const unsigned mode = canon_mode(S_IFREG | 0644);
 
 	if (argc > 1)
 		usage(builtin_diff_usage);
@@ -212,7 +213,7 @@ static void refresh_index_quietly(void)
 	discard_cache();
 	read_cache();
 	refresh_cache(REFRESH_QUIET|REFRESH_UNMERGED);
-	update_index_if_able(&the_index, &lock_file);
+	repo_update_index_if_able(the_repository, &lock_file);
 }
 
 static int builtin_diff_files(struct rev_info *revs, int argc, const char **argv)
@@ -337,20 +338,22 @@ int cmd_diff(int argc, const char **argv, const char *prefix)
 		       "--no-index" : "[--no-index]");
 
 	}
-	if (no_index)
-		/* If this is a no-index diff, just run it and exit there. */
-		diff_no_index(the_repository, &rev, argc, argv);
 
-	/* Otherwise, we are doing the usual "git" diff */
-	rev.diffopt.skip_stat_unmatch = !!diff_auto_refresh_index;
-
-	/* Scale to real terminal size and respect statGraphWidth config */
+	/* Set up defaults that will apply to both no-index and regular diffs. */
 	rev.diffopt.stat_width = -1;
 	rev.diffopt.stat_graph_width = -1;
-
-	/* Default to let external and textconv be used */
 	rev.diffopt.flags.allow_external = 1;
 	rev.diffopt.flags.allow_textconv = 1;
+
+	/* If this is a no-index diff, just run it and exit there. */
+	if (no_index)
+		diff_no_index(&rev, argc, argv);
+
+	/*
+	 * Otherwise, we are doing the usual "git" diff; set up any
+	 * further defaults that apply to regular diffs.
+	 */
+	rev.diffopt.skip_stat_unmatch = !!diff_auto_refresh_index;
 
 	/*
 	 * Default to intent-to-add entries invisible in the

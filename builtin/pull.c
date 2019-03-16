@@ -5,6 +5,7 @@
  *
  * Fetch one or more remote refs and merge it/them into the current HEAD.
  */
+#define USE_THE_INDEX_COMPATIBILITY_MACROS
 #include "cache.h"
 #include "config.h"
 #include "builtin.h"
@@ -55,6 +56,10 @@ static enum rebase_type parse_config_rebase(const char *key, const char *value,
 		return REBASE_MERGES;
 	else if (!strcmp(value, "interactive") || !strcmp(value, "i"))
 		return REBASE_INTERACTIVE;
+	/*
+	 * Please update _git_config() in git-completion.bash when you
+	 * add new rebase modes.
+	 */
 
 	if (fatal)
 		die(_("Invalid value for %s: %s"), key, value);

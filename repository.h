@@ -6,6 +6,8 @@
 struct config_set;
 struct git_hash_algo;
 struct index_state;
+struct lock_file;
+struct pathspec;
 struct raw_object_store;
 struct submodule_cache;
 
@@ -90,6 +92,9 @@ struct repository {
 	/* Repository's current hash algorithm, as serialized on disk. */
 	const struct git_hash_algo *hash_algo;
 
+	/* A unique-id for tracing purposes. */
+	int trace2_repo_id;
+
 	/* Configurations */
 
 	/* Indicate if a repository has a different 'commondir' from 'gitdir' */
@@ -138,5 +143,19 @@ void repo_clear(struct repository *repo);
  * populated then the number of entries will simply be returned.
  */
 int repo_read_index(struct repository *repo);
+int repo_hold_locked_index(struct repository *repo,
+			   struct lock_file *lf,
+			   int flags);
+
+int repo_read_index_preload(struct repository *,
+			    const struct pathspec *pathspec,
+			    unsigned refresh_flags);
+int repo_read_index_unmerged(struct repository *);
+/*
+ * Opportunistically update the index but do not complain if we can't.
+ * The lockfile is always committed or rolled back.
+ */
+void repo_update_index_if_able(struct repository *, struct lock_file *);
+
 
 #endif /* REPOSITORY_H */

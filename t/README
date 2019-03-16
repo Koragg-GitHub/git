@@ -170,6 +170,15 @@ appropriately before running "make".
 	implied by other options like --valgrind and
 	GIT_TEST_INSTALLED.
 
+--no-bin-wrappers::
+	By default, the test suite uses the wrappers in
+	`../bin-wrappers/` to execute `git` and friends. With this option,
+	`../git` and friends are run directly. This is not recommended
+	in general, as the wrappers contain safeguards to ensure that no
+	files from an installed Git are used, but can speed up test runs
+	especially on platforms where running shell scripts is expensive
+	(most notably, Windows).
+
 --root=<directory>::
 	Create "trash" directories used to store all temporary data during
 	testing under <directory>, instead of the t/ directory.
@@ -201,6 +210,11 @@ appropriately before running "make".
 	terminal.  The names of the trash directories get a
 	'.stress-<nr>' suffix, and the trash directory of the failed
 	test job is renamed to end with a '.stress-failed' suffix.
+
+--stress-limit=<N>::
+	When combined with --stress run the test script repeatedly
+	this many times in each of the parallel jobs or until one of
+	them fails, whichever comes first.
 
 You can also set the GIT_TEST_INSTALLED environment variable to
 the bindir of an existing git installation to test that installation.
@@ -357,6 +371,10 @@ new or changed files.
 GIT_TEST_INDEX_VERSION=<n> exercises the index read/write code path
 for the index version specified.  Can be set to any valid version
 (currently 2, 3, or 4).
+
+GIT_TEST_PACK_SPARSE=<boolean> if enabled will default the pack-objects
+builtin to use the sparse object walk. This can still be overridden by
+the --no-sparse command-line argument.
 
 GIT_TEST_PRELOAD_INDEX=<boolean> exercises the preload-index code path
 by overriding the minimum number of cache entries required per thread.
@@ -913,6 +931,15 @@ library for your script to use.
    on the key given.  The value must have been loaded using
    test_oid_init or test_oid_cache.  Providing an unknown key is an
    error.
+
+ - yes [<string>]
+
+   This is often seen in modern UNIX but some platforms lack it, so
+   the test harness overrides the platform implementation with a
+   more limited one.  Use this only when feeding a handful lines of
+   output to the downstream---unlike the real version, it generates
+   only up to 99 lines.
+
 
 Prerequisites
 -------------

@@ -5,7 +5,8 @@
 # Copyright (c) 2007 Lars Hjemli
 
 dashless=$(basename "$0" | sed -e 's/-/ /')
-USAGE="[--quiet] add [-b <branch>] [-f|--force] [--name <name>] [--reference <repository>] [--] <repository> [<path>]
+USAGE="[--quiet] [--cached]
+   or: $dashless [--quiet] add [-b <branch>] [-f|--force] [--name <name>] [--reference <repository>] [--] <repository> [<path>]
    or: $dashless [--quiet] status [--cached] [--recursive] [--] [<path>...]
    or: $dashless [--quiet] init [--] [<path>...]
    or: $dashless [--quiet] deinit [-f|--force] (--all| [--] <path>...)
@@ -548,7 +549,7 @@ cmd_update()
 	do
 		die_if_unmatched "$quickabort" "$sha1"
 
-		git submodule--helper ensure-core-worktree "$sm_path"
+		git submodule--helper ensure-core-worktree "$sm_path" || exit 1
 
 		update_module=$(git submodule--helper update-module-mode $just_cloned "$sm_path" $update)
 
@@ -850,8 +851,11 @@ cmd_summary() {
 			;;
 		esac
 
-		sha1_abbr_src=$(echo $sha1_src | cut -c1-7)
-		sha1_abbr_dst=$(echo $sha1_dst | cut -c1-7)
+		sha1_abbr_src=$(GIT_DIR="$name/.git" git rev-parse --short $sha1_src 2>/dev/null ||
+			echo $sha1_src | cut -c1-7)
+		sha1_abbr_dst=$(GIT_DIR="$name/.git" git rev-parse --short $sha1_dst 2>/dev/null ||
+			echo $sha1_dst | cut -c1-7)
+
 		if test $status = T
 		then
 			blob="$(gettext "blob")"
