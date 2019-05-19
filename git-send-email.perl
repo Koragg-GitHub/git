@@ -1699,7 +1699,7 @@ sub process_file {
 	# Now parse the message body
 	while(<$fh>) {
 		$message .=  $_;
-		if (/^([a-z-]*-by|Cc): (.*)/i) {
+		if (/^([a-z][a-z-]*-by|Cc): (.*)/i) {
 			chomp;
 			my ($what, $c) = ($1, $2);
 			# strip garbage for the address we'll use:
@@ -1872,7 +1872,7 @@ sub apply_transfer_encoding {
 	$message = MIME::Base64::decode($message)
 		if ($from eq 'base64');
 
-	$to = ($message =~ /.{999,}/) ? 'quoted-printable' : '8bit'
+	$to = ($message =~ /(?:.{999,}|\r)/) ? 'quoted-printable' : '8bit'
 		if $to eq 'auto';
 
 	die __("cannot send message as 7bit")
