@@ -195,6 +195,9 @@ static enum parse_opt_result get_value(struct parse_opt_ctx_t *p,
 		}
 		if (get_arg(p, opt, flags, &arg))
 			return -1;
+		if (!*arg)
+			return error(_("%s expects a numerical value"),
+				     optname(opt, flags));
 		*(int *)opt->value = strtol(arg, (char **)&s, 10);
 		if (*s)
 			return error(_("%s expects a numerical value"),
@@ -777,7 +780,8 @@ int parse_options_step(struct parse_opt_ctx_t *ctx,
 			continue;
 		}
 
-		if (!arg[2]) { /* "--" */
+		if (!arg[2] /* "--" */ ||
+		    !strcmp(arg + 2, "end-of-options")) {
 			if (!(ctx->flags & PARSE_OPT_KEEP_DASHDASH)) {
 				ctx->argc--;
 				ctx->argv++;

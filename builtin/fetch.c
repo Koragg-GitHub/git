@@ -23,6 +23,9 @@
 #include "packfile.h"
 #include "list-objects-filter-options.h"
 #include "commit-reach.h"
+#include "branch.h"
+
+#define FORCED_UPDATES_DELAY_WARNING_IN_MS (10 * 1000)
 
 static const char * const builtin_fetch_usage[] = {
 	N_("git fetch [<options>] [<repository> [<refspec>...]]"),
@@ -39,6 +42,8 @@ enum {
 };
 
 static int fetch_prune_config = -1; /* unspecified */
+static int fetch_show_forced_updates = 1;
+static uint64_t forced_updates_ms = 0;
 static int prune = -1; /* unspecified */
 #define PRUNE_BY_DEFAULT 0 /* do we prune by default? */
 
@@ -46,8 +51,10 @@ static int fetch_prune_tags_config = -1; /* unspecified */
 static int prune_tags = -1; /* unspecified */
 #define PRUNE_TAGS_BY_DEFAULT 0 /* do we prune tags by default? */
 
-static int all, append, dry_run, force, keep, multiple, update_head_ok, verbosity, deepen_relative;
+static int all, append, dry_run, force, keep, multiple, update_head_ok;
+static int verbosity, deepen_relative, set_upstream;
 static int progress = -1;
+static int enable_auto_gc = 1;
 static int tags = TAGS_DEFAULT, unshallow, update_shallow, deepen;
 static int max_children = 1;
 static enum transport_family family;
@@ -76,6 +83,11 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
 
 	if (!strcmp(k, "fetch.prunetags")) {
 		fetch_prune_tags_config = git_config_bool(k, v);
+		return 0;
+	}
+
+	if (!strcmp(k, "fetch.showforcedupdates")) {
+		fetch_show_forced_updates = git_config_bool(k, v);
 		return 0;
 	}
 
@@ -113,6 +125,8 @@ static struct option builtin_fetch_options[] = {
 	OPT__VERBOSITY(&verbosity),
 	OPT_BOOL(0, "all", &all,
 		 N_("fetch from all remotes")),
+	OPT_BOOL(0, "set-upstream", &set_upstream,
+		 N_("set upstream for git pull/fetch")),
 	OPT_BOOL('a', "append", &append,
 		 N_("append to .git/FETCH_HEAD instead of overwriting")),
 	OPT_STRING(0, "upload-pack", &upload_pack, N_("path"),
@@ -169,6 +183,10 @@ static struct option builtin_fetch_options[] = {
 	OPT_STRING_LIST(0, "negotiation-tip", &negotiation_tip, N_("revision"),
 			N_("report that we have only objects reachable from this object")),
 	OPT_PARSE_LIST_OBJECTS_FILTER(&filter_options),
+	OPT_BOOL(0, "auto-gc", &enable_auto_gc,
+		 N_("run 'gc --auto' after fetching")),
+	OPT_BOOL(0, "show-forced-updates", &fetch_show_forced_updates,
+		 N_("check for forced-updates on all updated branches")),
 	OPT_END()
 };
 
@@ -239,6 +257,7 @@ static int will_fetch(struct ref **head, const unsigned char *sha1)
 struct refname_hash_entry {
 	struct hashmap_entry ent; /* must be the first member */
 	struct object_id oid;
+	int ignore;
 	char refname[FLEX_ARRAY];
 };
 
@@ -287,6 +306,11 @@ static int refname_hash_exists(struct hashmap *map, const char *refname)
 	return !!hashmap_get_from_hash(map, strhash(refname), refname);
 }
 
+static void clear_item(struct refname_hash_entry *item)
+{
+	item->ignore = 1;
+}
+
 static void find_non_local_tags(const struct ref *refs,
 				struct ref **head,
 				struct ref ***tail)
@@ -319,7 +343,7 @@ static void find_non_local_tags(const struct ref *refs,
 			    !will_fetch(head, ref->old_oid.hash) &&
 			    !has_object_file_with_flags(&item->oid, OBJECT_INFO_QUICK) &&
 			    !will_fetch(head, item->oid.hash))
-				oidclr(&item->oid);
+				clear_item(item);
 			item = NULL;
 			continue;
 		}
@@ -333,7 +357,7 @@ static void find_non_local_tags(const struct ref *refs,
 		if (item &&
 		    !has_object_file_with_flags(&item->oid, OBJECT_INFO_QUICK) &&
 		    !will_fetch(head, item->oid.hash))
-			oidclr(&item->oid);
+			clear_item(item);
 
 		item = NULL;
 
@@ -354,7 +378,7 @@ static void find_non_local_tags(const struct ref *refs,
 	if (item &&
 	    !has_object_file_with_flags(&item->oid, OBJECT_INFO_QUICK) &&
 	    !will_fetch(head, item->oid.hash))
-		oidclr(&item->oid);
+		clear_item(item);
 
 	/*
 	 * For all the tags in the remote_refs_list,
@@ -362,19 +386,21 @@ static void find_non_local_tags(const struct ref *refs,
 	 */
 	for_each_string_list_item(remote_ref_item, &remote_refs_list) {
 		const char *refname = remote_ref_item->string;
+		struct ref *rm;
 
 		item = hashmap_get_from_hash(&remote_refs, strhash(refname), refname);
 		if (!item)
 			BUG("unseen remote ref?");
 
 		/* Unless we have already decided to ignore this item... */
-		if (!is_null_oid(&item->oid)) {
-			struct ref *rm = alloc_ref(item->refname);
-			rm->peer_ref = alloc_ref(item->refname);
-			oidcpy(&rm->old_oid, &item->oid);
-			**tail = rm;
-			*tail = &rm->next;
-		}
+		if (item->ignore)
+			continue;
+
+		rm = alloc_ref(item->refname);
+		rm->peer_ref = alloc_ref(item->refname);
+		oidcpy(&rm->old_oid, &item->oid);
+		**tail = rm;
+		*tail = &rm->next;
 	}
 	hashmap_free(&remote_refs, 1);
 	string_list_clear(&remote_refs_list, 0);
@@ -699,6 +725,7 @@ static int update_local_ref(struct ref *ref,
 	enum object_type type;
 	struct branch *current_branch = branch_get(NULL);
 	const char *pretty_ref = prettify_refname(ref->name);
+	int fast_forward = 0;
 
 	type = oid_object_info(the_repository, &ref->new_oid, NULL);
 	if (type < 0)
@@ -773,9 +800,18 @@ static int update_local_ref(struct ref *ref,
 		return r;
 	}
 
-	if (in_merge_bases(current, updated)) {
+	if (fetch_show_forced_updates) {
+		uint64_t t_before = getnanotime();
+		fast_forward = in_merge_bases(current, updated);
+		forced_updates_ms += (getnanotime() - t_before) / 1000000;
+	} else {
+		fast_forward = 1;
+	}
+
+	if (fast_forward) {
 		struct strbuf quickref = STRBUF_INIT;
 		int r;
+
 		strbuf_add_unique_abbrev(&quickref, &current->object.oid, DEFAULT_ABBREV);
 		strbuf_addstr(&quickref, "..");
 		strbuf_add_unique_abbrev(&quickref, &ref->new_oid, DEFAULT_ABBREV);
@@ -817,6 +853,15 @@ static int iterate_ref_map(void *cb_data, struct object_id *oid)
 	oidcpy(oid, &ref->old_oid);
 	return 0;
 }
+
+static const char warn_show_forced_updates[] =
+N_("Fetch normally indicates which branches had a forced update,\n"
+   "but that check has been disabled. To re-enable, use '--show-forced-updates'\n"
+   "flag or run 'git config fetch.showForcedUpdates true'.");
+static const char warn_time_show_forced_updates[] =
+N_("It took %.2f seconds to check forced updates. You can use\n"
+   "'--no-show-forced-updates' or run 'git config fetch.showForcedUpdates false'\n"
+   " to avoid this check.\n");
 
 static int store_updated_refs(const char *raw_url, const char *remote_name,
 			      int connectivity_checked, struct ref *ref_map)
@@ -970,6 +1015,15 @@ static int store_updated_refs(const char *raw_url, const char *remote_name,
 		error(_("some local refs could not be updated; try running\n"
 		      " 'git remote prune %s' to remove any old, conflicting "
 		      "branches"), remote_name);
+
+	if (advice_fetch_show_forced_updates) {
+		if (!fetch_show_forced_updates) {
+			warning(_(warn_show_forced_updates));
+		} else if (forced_updates_ms > FORCED_UPDATES_DELAY_WARNING_IN_MS) {
+			warning(_(warn_time_show_forced_updates),
+				forced_updates_ms / 1000.0);
+		}
+	}
 
  abort:
 	strbuf_release(&note);
@@ -1317,6 +1371,51 @@ static int do_fetch(struct transport *transport,
 		retcode = 1;
 		goto cleanup;
 	}
+
+	if (set_upstream) {
+		struct branch *branch = branch_get("HEAD");
+		struct ref *rm;
+		struct ref *source_ref = NULL;
+
+		/*
+		 * We're setting the upstream configuration for the
+		 * current branch. The relevent upstream is the
+		 * fetched branch that is meant to be merged with the
+		 * current one, i.e. the one fetched to FETCH_HEAD.
+		 *
+		 * When there are several such branches, consider the
+		 * request ambiguous and err on the safe side by doing
+		 * nothing and just emit a warning.
+		 */
+		for (rm = ref_map; rm; rm = rm->next) {
+			if (!rm->peer_ref) {
+				if (source_ref) {
+					warning(_("multiple branch detected, incompatible with --set-upstream"));
+					goto skip;
+				} else {
+					source_ref = rm;
+				}
+			}
+		}
+		if (source_ref) {
+			if (!strcmp(source_ref->name, "HEAD") ||
+			    starts_with(source_ref->name, "refs/heads/"))
+				install_branch_config(0,
+						      branch->name,
+						      transport->remote->name,
+						      source_ref->name);
+			else if (starts_with(source_ref->name, "refs/remotes/"))
+				warning(_("not setting upstream for a remote remote-tracking branch"));
+			else if (starts_with(source_ref->name, "refs/tags/"))
+				warning(_("not setting upstream for a remote tag"));
+			else
+				warning(_("unknown branch type"));
+		} else {
+			warning(_("no source branch found.\n"
+				"you need to specify exactly one branch with the --set-upstream option."));
+		}
+	}
+ skip:
 	free_refs(ref_map);
 
 	/* if neither --no-tags nor --tags was specified, do automated tag
@@ -1424,7 +1523,7 @@ static int fetch_multiple(struct string_list *list)
 			return errcode;
 	}
 
-	argv_array_pushl(&argv, "fetch", "--append", NULL);
+	argv_array_pushl(&argv, "fetch", "--append", "--no-auto-gc", NULL);
 	add_options_to_argv(&argv);
 
 	for (i = 0; i < list->nr; i++) {
@@ -1672,13 +1771,15 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
 
 	string_list_clear(&list, 0);
 
-	close_all_packs(the_repository->objects);
+	close_object_store(the_repository->objects);
 
-	argv_array_pushl(&argv_gc_auto, "gc", "--auto", NULL);
-	if (verbosity < 0)
-		argv_array_push(&argv_gc_auto, "--quiet");
-	run_command_v_opt(argv_gc_auto.argv, RUN_GIT_CMD);
-	argv_array_clear(&argv_gc_auto);
+	if (enable_auto_gc) {
+		argv_array_pushl(&argv_gc_auto, "gc", "--auto", NULL);
+		if (verbosity < 0)
+			argv_array_push(&argv_gc_auto, "--quiet");
+		run_command_v_opt(argv_gc_auto.argv, RUN_GIT_CMD);
+		argv_array_clear(&argv_gc_auto);
+	}
 
 	return result;
 }

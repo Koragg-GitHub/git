@@ -234,7 +234,7 @@ test_expect_success 'rev-list stops traversal at missing and promised commit' '
 
 	git -C repo config core.repositoryformatversion 1 &&
 	git -C repo config extensions.partialclone "arbitrary string" &&
-	GIT_TEST_COMMIT_GRAPH=0 git -C repo rev-list --exclude-promisor-objects --objects bar >out &&
+	GIT_TEST_COMMIT_GRAPH=0 git -C repo -c core.commitGraph=false rev-list --exclude-promisor-objects --objects bar >out &&
 	grep $(git -C repo rev-parse bar) out &&
 	! grep $FOO out
 '
@@ -517,5 +517,8 @@ test_expect_success 'fetching of missing objects from an HTTP server' '
 	IDX=$(cat promisorlist | sed "s/promisor$/idx/") &&
 	git verify-pack --verbose "$IDX" | grep "$HASH"
 '
+
+# DO NOT add non-httpd-specific tests here, because the last part of this
+# test script is only executed when httpd is available and enabled.
 
 test_done
