@@ -27,6 +27,7 @@
 #include "pack-objects.h"
 #include "blob.h"
 #include "tree.h"
+#include "promisor-remote.h"
 
 #define FAILED_RUN "failed to run %s"
 
@@ -457,7 +458,7 @@ static const char *lock_repo_for_gc(int force, pid_t* ret_pid)
 /*
  * Returns 0 if there was no previous error and gc can proceed, 1 if
  * gc should not proceed due to an error in the last run. Prints a
- * message and returns -1 if an error occured while reading gc.log
+ * message and returns -1 if an error occurred while reading gc.log
  */
 static int report_last_gc_error(void)
 {
@@ -600,7 +601,7 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 		if (detach_auto) {
 			int ret = report_last_gc_error();
 			if (ret < 0)
-				/* an I/O error occured, already reported */
+				/* an I/O error occurred, already reported */
 				exit(128);
 			if (ret == 1)
 				/* Last gc --auto failed. Skip this one. */
@@ -659,7 +660,7 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 			argv_array_push(&prune, prune_expire);
 			if (quiet)
 				argv_array_push(&prune, "--no-progress");
-			if (repository_format_partial_clone)
+			if (has_promisor_remote())
 				argv_array_push(&prune,
 						"--exclude-promisor-objects");
 			if (run_command_v_opt(prune.argv, RUN_GIT_CMD))
@@ -685,7 +686,7 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
 
 	prepare_repo_settings(the_repository);
 	if (the_repository->settings.gc_write_commit_graph == 1)
-		write_commit_graph_reachable(get_object_directory(),
+		write_commit_graph_reachable(the_repository->objects->odb,
 					     !quiet && !daemonized ? COMMIT_GRAPH_WRITE_PROGRESS : 0,
 					     NULL);
 

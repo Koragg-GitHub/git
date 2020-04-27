@@ -83,7 +83,6 @@
 /git-init-db
 /git-interpret-trailers
 /git-instaweb
-/git-legacy-stash
 /git-log
 /git-ls-files
 /git-ls-remote
@@ -158,6 +157,7 @@
 /git-show-branch
 /git-show-index
 /git-show-ref
+/git-sparse-checkout
 /git-stage
 /git-stash
 /git-status
@@ -216,6 +216,7 @@
 /tags
 /TAGS
 /cscope*
+*.hcc
 *.obj
 *.lib
 *.res
@@ -231,7 +232,6 @@
 *.ipdb
 *.dll
 .vs/
-*.manifest
 Debug/
 Release/
 /UpgradeLog*.htm

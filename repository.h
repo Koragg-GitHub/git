@@ -30,6 +30,7 @@ struct repo_settings {
 
 	int core_commit_graph;
 	int gc_write_commit_graph;
+	int fetch_write_commit_graph;
 
 	int index_version;
 	enum untracked_cache_setting core_untracked_cache;
@@ -66,8 +67,12 @@ struct repository {
 	 */
 	struct parsed_object_pool *parsed_objects;
 
-	/* The store in which the refs are held. */
-	struct ref_store *refs;
+	/*
+	 * The store in which the refs are held. This should generally only be
+	 * accessed via get_main_ref_store(), as that will lazily initialize
+	 * the ref object.
+	 */
+	struct ref_store *refs_private;
 
 	/*
 	 * Contains path to often used file names.
@@ -124,6 +129,9 @@ struct repository {
 	/* A unique-id for tracing purposes. */
 	int trace2_repo_id;
 
+	/* True if commit-graph has been disabled within this process. */
+	int commit_graph_disabled;
+
 	/* Configurations */
 
 	/* Indicate if a repository has a different 'commondir' from 'gitdir' */
@@ -168,7 +176,7 @@ void repo_clear(struct repository *repo);
  * be allocated if needed.
  *
  * Return the number of index entries in the populated index or a value less
- * than zero if an error occured.  If the repository's index has already been
+ * than zero if an error occurred.  If the repository's index has already been
  * populated then the number of entries will simply be returned.
  */
 int repo_read_index(struct repository *repo);
